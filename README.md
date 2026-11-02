@@ -30,7 +30,7 @@ Thresholds and multipliers are starting guesses, to be adjusted after a small pi
 
 ## Setup
 
-**Model:** `Qwen/Qwen3-8B-AWQ` served locally by vLLM's OpenAI-compatible API (thinking off, temperature 0; all settings in `agent/loop.py` and logged with every run).
+**Model:** `Qwen/Qwen3-8B-AWQ` served locally by vLLM's OpenAI-compatible API (thinking off, temperature 0.7, top_p 0.8; all settings in `agent/loop.py` and logged with every run).
 
 ```sh
 docker run -d --name vllm --gpus all -p 8001:8000 vllm/vllm-openai:latest \
@@ -48,6 +48,7 @@ python -m unittest                  # offline checks: generator reachability, gr
 python -m tests.toolcall_check      # live: does the model make valid tool calls?
 python -m runner.run_grid --split dev --strategy s0 --budgets 8192 16384   # tune prompts on dev only
 python -m runner.run_grid --split test --strategy s0 --budgets 8192 16384 --trials 3
+python -m analysis.summarize results/<file>.jsonl                          # accuracy by budget x hops, trimming
 ```
 
 Each run writes `results/<timestamp>_A_<strategy>.jsonl`: a config line, then one line per task with the full transcript, answer, grade and token counts.

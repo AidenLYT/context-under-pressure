@@ -102,5 +102,16 @@ class NaiveStrategy(unittest.TestCase):
         self.assertEqual(s0_naive.prepare_context(h, 10_000), h)
 
 
+class Summary(unittest.TestCase):
+    def test_cells_and_trim_detection(self):
+        from analysis.summarize import summarize
+
+        def run(correct, sent, hist):
+            return {"budget": 8192, "task": {"hops": 2}, "correct": correct, "max_prompt_tokens": 100,
+                    "calls": [{"sent_messages": sent, "history_messages": hist}]}
+        cell = summarize([run(True, 3, 2), run(False, 2, 4)])[(8192, 2)]  # untrimmed pass, trimmed fail
+        self.assertEqual((cell["n"], cell["correct"], cell["trimmed"], cell["trimmed_correct"]), (2, 1, 1, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

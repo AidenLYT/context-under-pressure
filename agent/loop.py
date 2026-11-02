@@ -17,7 +17,8 @@ SYSTEM_PROMPT = (
 CONFIG = {
     "base_url": "http://localhost:8001/v1",
     "model": "local-model",  # Qwen/Qwen3-8B-AWQ in the vllm container
-    "temperature": 0.0,
+    "temperature": 0.7,  # Qwen3 non-thinking recommendation; trials are real repeats
+    "top_p": 0.8,
     "max_output_tokens": 1024,
     "enable_thinking": False,  # Qwen3 thinking off: GPU time is the binding constraint
     "max_turns": 30,
@@ -40,12 +41,13 @@ def run_task(llm, question, docs, prepare_context, budget, cfg=CONFIG):
         counted = count_tokens(context, cfg)
         messages = [{"role": "system", "content": cfg["system_prompt"]}] + context
         resp = llm.chat.completions.create(
-            model=cfg["model"], messages=messages, tools=TOOLS, temperature=cfg["temperature"],
+            model=cfg["model"], messages=messages, tools=TOOLS, temperature=cfg["temperature"], top_p=cfg["top_p"],
             max_tokens=cfg["max_output_tokens"],
             extra_body={"chat_template_kwargs": {"enable_thinking": cfg["enable_thinking"]}})
         msg = resp.choices[0].message
         calls.append({"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens,
-                      "counted_tokens": counted, "sent_messages": len(messages)})
+                      "counted_tokens": counted, "sent_messages": len(messages),
+                      "history_messages": len(history)})  # sent < history + 1 (system) means the strategy trimmed
         turn = {"role": "assistant", "content": msg.content or ""}
         if msg.tool_calls:
             turn["tool_calls"] = [{"id": tc.id, "type": "function",
