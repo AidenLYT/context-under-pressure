@@ -1,5 +1,5 @@
 """S0 naive baseline: keep the full history, drop the oldest turns when over budget."""
-from agent.strategies import estimate_tokens
+from agent.strategies import count_tokens
 
 
 def prepare_context(history, budget):
@@ -8,6 +8,6 @@ def prepare_context(history, budget):
     task, rest = history[:1], history[1:]
     starts = [i for i, m in enumerate(rest) if m["role"] == "assistant"]
     for s in starts:
-        if estimate_tokens(task + rest[s:]) <= budget:
+        if count_tokens(task + rest[s:]) <= budget:
             return task + rest[s:]
     return task + rest[starts[-1]:] if starts else task  # newest turn alone is still too big: send it anyway

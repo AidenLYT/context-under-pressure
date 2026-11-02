@@ -1,11 +1,21 @@
-"""Each strategy is prepare_context(history, budget) -> messages (system prompt excluded)."""
+"""Each strategy is prepare_context(history, budget) -> messages (system prompt excluded).
+budget is the whole prompt the model sees: system prompt, tool schema and chat template included."""
 import json
+import urllib.request
+
+from agent.loop import CONFIG
+from agent.tools import TOOLS
 
 
-def estimate_tokens(messages):
-    # shortcut: ~4 chars/token estimate over the JSON; the real prompt_tokens is logged per call,
-    # switch to vLLM's /tokenize if budgets need to be exact.
-    return sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) // 4
+def count_tokens(messages, cfg=CONFIG):
+    """Exact prompt tokens from vLLM's /tokenize for the request run_task would send with these messages."""
+    body = {"model": cfg["model"], "messages": [{"role": "system", "content": cfg["system_prompt"]}] + messages,
+            "tools": TOOLS, "add_generation_prompt": True,
+            "chat_template_kwargs": {"enable_thinking": cfg["enable_thinking"]}}
+    url = cfg["base_url"].removesuffix("/v1") + "/tokenize"
+    req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r)["count"]
 
 
 def get(name):

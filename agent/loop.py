@@ -7,7 +7,9 @@ from agent.tools import TOOLS, call_tool
 
 SYSTEM_PROMPT = (
     "You answer questions about a company archive. Use the search_docs tool to find evidence; "
-    "do not guess. Later documents can override earlier ones. When you are done, end your reply "
+    "do not guess. Later documents can override earlier ones. Questions often need several searches: "
+    "when a document gives you a person's name, search for that name to find the next fact, and do not "
+    "answer 'Unknown' while there is a name you have not searched for. When you are done, end your reply "
     "with a final line of the form 'ANSWER: <answer>', giving only the name or city."
 )
 
@@ -18,7 +20,7 @@ CONFIG = {
     "temperature": 0.0,
     "max_output_tokens": 1024,
     "enable_thinking": False,  # Qwen3 thinking off: GPU time is the binding constraint
-    "max_turns": 12,
+    "max_turns": 30,
     "system_prompt": SYSTEM_PROMPT,
 }
 
@@ -31,16 +33,19 @@ def run_task(llm, question, docs, prepare_context, budget, cfg=CONFIG):
     """Run one task. Returns the final answer (or None), the full transcript and usage numbers."""
     history = [{"role": "user", "content": question}]
     calls, start = [], time.time()
-    input_budget = budget - cfg["max_output_tokens"] - 400  # reserve room for output, system prompt and tool schema
+    from agent.strategies import count_tokens  # here, not at top: strategies import CONFIG from this module
+    prompt_budget = budget - cfg["max_output_tokens"]  # the prompt plus the reply must fit the budget
     for _ in range(cfg["max_turns"]):
-        messages = [{"role": "system", "content": cfg["system_prompt"]}] + prepare_context(history, input_budget)
+        context = prepare_context(history, prompt_budget)
+        counted = count_tokens(context, cfg)
+        messages = [{"role": "system", "content": cfg["system_prompt"]}] + context
         resp = llm.chat.completions.create(
             model=cfg["model"], messages=messages, tools=TOOLS, temperature=cfg["temperature"],
             max_tokens=cfg["max_output_tokens"],
             extra_body={"chat_template_kwargs": {"enable_thinking": cfg["enable_thinking"]}})
         msg = resp.choices[0].message
         calls.append({"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens,
-                      "sent_messages": len(messages)})
+                      "counted_tokens": counted, "sent_messages": len(messages)})
         turn = {"role": "assistant", "content": msg.content or ""}
         if msg.tool_calls:
             turn["tool_calls"] = [{"id": tc.id, "type": "function",

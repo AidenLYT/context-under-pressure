@@ -46,7 +46,8 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # Window
 ```sh
 python -m unittest                  # offline checks: generator reachability, grader, S0 trimming
 python -m tests.toolcall_check      # live: does the model make valid tool calls?
-python -m runner.run_grid --strategy s0 --budgets 8192 16384 --trials 3
+python -m runner.run_grid --split dev --strategy s0 --budgets 8192 16384   # tune prompts on dev only
+python -m runner.run_grid --split test --strategy s0 --budgets 8192 16384 --trials 3
 ```
 
 Each run writes `results/<timestamp>_A_<strategy>.jsonl`: a config line, then one line per task with the full transcript, answer, grade and token counts.
@@ -54,11 +55,11 @@ Each run writes `results/<timestamp>_A_<strategy>.jsonl`: a config line, then on
 ## Layout
 
 ```
-tasks/archive_gen.py        family A: synthetic org archive (planted facts, corrections, distractors)
+tasks/archive_gen.py        family A: synthetic org archive; dial = hops (1-6), ~300-token docs; dev/test split by seed
 agent/loop.py               model + tool loop
 agent/tools.py              search_docs (IDF keyword search)
 agent/strategies/           one prepare_context(history, budget) per strategy; s0_naive.py so far
-runner/run_grid.py          strategy x budget x trial
+runner/run_grid.py          split x strategy x budget x trial
 graders/programmatic.py     exact match on planted answers
 tests/
 ```
@@ -76,4 +77,4 @@ tests/
 
 Budgets: 8k and 16k tokens. Task families: A (synthetic org archive, built first), B (codebase investigation), C (stateful simulation).
 
-**Status:** S0 runs end to end on a 50-document family A archive.
+**Status:** S0 runs end to end on family A (hops 1-6, ~300-token docs, exact token budgets via vLLM `/tokenize`). Dev split, 1 trial: 20/24 at 8k, 21/24 at 16k; the 8k budget trims history on most 5-6 hop tasks, 16k never does.
