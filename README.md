@@ -47,8 +47,8 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # Window
 python -m unittest                  # offline checks: generator reachability, grader, S0 trimming
 python -m tests.toolcall_check      # live: does the model make valid tool calls?
 python -m runner.run_grid --split dev --strategy s0 --budgets 8192 16384   # tune prompts on dev only
-python -m runner.run_grid --split test --strategy s0 --budgets 8192 16384 --trials 3
-python -m analysis.summarize results/<file>.jsonl                          # accuracy by budget x hops, trimming
+python -m runner.run_grid --split test --strategy s0 --budgets 8192 16384
+python -m analysis.summarize results/<file>.jsonl                          # accuracy by budget x pad, trimming
 ```
 
 Each run writes `results/<timestamp>_A_<strategy>.jsonl`: a config line, then one line per task with the full transcript, answer, grade and token counts.
@@ -56,7 +56,7 @@ Each run writes `results/<timestamp>_A_<strategy>.jsonl`: a config line, then on
 ## Layout
 
 ```
-tasks/archive_gen.py        family A: synthetic org archive; dial = hops (1-6), ~300-token docs; dev/test split by seed
+tasks/archive_gen.py        family A: org archive; answer = lead city + manager's city (needs the early fact); dial = doc length (pad sentences)
 agent/loop.py               model + tool loop
 agent/tools.py              search_docs (IDF keyword search)
 agent/strategies/           one prepare_context(history, budget) per strategy; s0_naive.py so far
@@ -78,4 +78,4 @@ tests/
 
 Budgets: 8k and 16k tokens. Task families: A (synthetic org archive, built first), B (codebase investigation), C (stateful simulation).
 
-**Status:** S0 runs end to end on family A (hops 1-6, ~300-token docs, exact token budgets via vLLM `/tokenize`). Dev split, 1 trial: 20/24 at 8k, 21/24 at 16k; the 8k budget trims history on most 5-6 hop tasks, 16k never does.
+**Status:** S0 on family A v1 (pure lookup chains, hops 1-6) showed no budget effect on test: chains are memoryless, so dropped turns were never needed. v2 asks for two cities, the first found early, with 3 hops fixed and doc length as the dial (Qwen3-8B loses its way on longer chains even with full context). Dev: 16k flat at ~75% across doc lengths; 8k collapses once the task outgrows the budget, with S0 re-running the same search after losing its context.

@@ -1,9 +1,13 @@
 """Family A: a synthetic org archive with planted facts, contradictions and distractors.
 
-Difficulty dial: hops, the length of the lookup chain. 1 = who leads a project; 2 = that lead's city;
-3 = the city of the lead's manager; each further hop climbs one more manager (up to 6). Each hop is reachable only
-by searching the previous hop's answer, and every document is ~300 tokens of routine text with one
-fact buried in it, so each search adds ~1.5k tokens and long chains outgrow the budget.
+Every question asks for two cities: the project lead's, and that of a manager hops-2 levels above
+them. The lead's city is found at the second search but only needed in the final answer, so a strategy
+that drops old turns loses it (a pure chain lookup would not test that: each hop needs only the last).
+
+Difficulty dial: pad_sentences, the routine text around each fact (~15 tokens per sentence), which sets
+the tokens per search and so the context a task needs. Questions and answers are identical across pad
+levels for a seed, so only context length changes. hops stays at 3 by default: Qwen3-8B without thinking
+loses its way on longer chains even with full context, which would confound the budget effect.
 """
 import datetime
 import random
@@ -20,6 +24,7 @@ CITIES = ["Lisbon", "Osaka", "Denver", "Nairobi", "Krakow", "Toronto", "Melbourn
           "Dublin", "Seoul"]
 KINDS = ["email", "ticket", "meeting notes"]
 SPLITS = {"dev": [0, 1], "test": [2, 3, 4, 5, 6, 7, 8, 9]}  # by archive seed; tune prompts on dev only
+PAD_LEVELS = [20, 40, 50, 60]  # ~290 to ~830 tokens per doc; 3-search task ~3.4k to ~9.5k
 
 # Routine filler around each fact. No names, cities, projects or relation words (tests enforce this).
 PADDING = [
@@ -66,9 +71,9 @@ PADDING = [
 ]
 
 
-def generate(n_docs=80, n_questions=12, hops=(1, 2, 3, 4, 5, 6), seed=0, p_correction=0.3, pad_sentences=21):
+def generate(n_docs=150, n_questions=12, hops=(3,), seed=0, p_correction=0.3, pad_sentences=21):
     """Return {"docs": [{"id", "kind", "date", "text"}],
-    "questions": [{"id", "question", "answer", "hops", "chain", "support"}]}; chain[i] is hop i's answer."""
+    "questions": [{"id", "question", "answer", "hops", "pad", "steps": [{"query", "docs"}]}]}."""
     rng = random.Random(seed)
     people = rng.sample([f"{f} {l}" for f in FIRST for l in LAST], len(FIRST) * len(LAST))
     city_of = {p: rng.choice(CITIES) for p in people}
@@ -90,7 +95,6 @@ def generate(n_docs=80, n_questions=12, hops=(1, 2, 3, 4, 5, 6), seed=0, p_corre
 
     for qi, proj in enumerate(asked):
         owner = new_person()
-        support = []
         if rng.random() < p_correction:
             old = new_person()
             d_old = rng.randint(1, 150)
@@ -100,36 +104,51 @@ def generate(n_docs=80, n_questions=12, hops=(1, 2, 3, 4, 5, 6), seed=0, p_corre
             facts.append((f"q{qi}-oldcity", day(), f"{old} is based in the {city_of[old]} office."))
         else:
             facts.append((f"q{qi}-owner", day(), f"Agreed that {owner} will lead project {proj}."))
-        support.append(f"q{qi}-owner")
         h = hops[qi % len(hops)]
+        if h < 3:
+            raise ValueError("hops must be >= 3: project, lead, then at least one manager")
+        # Search steps: project -> lead (city + first manager) -> each manager -> top manager's city.
+        facts.append((f"q{qi}-leadcity", day(), f"{owner} is based in the {city_of[owner]} office."))
+        steps = [(f"project {proj}", [f"q{qi}-owner"]), (owner, [f"q{qi}-leadcity"])]
         chain = [owner]
-        for m in range(h - 2):  # hops 3+ climb the management chain
+        for m in range(h - 2):
             boss = new_person()
             facts.append((f"q{qi}-mgr{m}", day(), f"{chain[-1]} reports to {boss}."))
-            support.append(f"q{qi}-mgr{m}")
+            steps[-1][1].append(f"q{qi}-mgr{m}")
+            steps.append((boss, []))
             chain.append(boss)
-        if h >= 2:
-            facts.append((f"q{qi}-city", day(), f"{chain[-1]} is based in the {city_of[chain[-1]]} office."))
-            support.append(f"q{qi}-city")
-            chain.append(city_of[chain[-1]])
-        whose = "the " + "manager of the " * (h - 2) + "person"
-        q = (f"Who currently leads project {proj}?" if h == 1 else
-             f"In which city is the office of {whose} who currently leads project {proj}?")
-        questions.append({"id": f"A-{seed}-{qi}", "question": q, "answer": chain[-1], "hops": h,
-                          "chain": chain, "support": support})
+        facts.append((f"q{qi}-topcity", day(), f"{chain[-1]} is based in the {city_of[chain[-1]]} office."))
+        steps[-1][1].append(f"q{qi}-topcity")
+        lead = f"the person who currently leads project {proj}"
+        q = (f"In which city is the office of {lead}, and in which city is the office of "
+             f"the {'manager of the ' * (h - 3)}manager of that person? Answer as '<first city>; <second city>'.")
+        questions.append({"id": f"A-{seed}-{qi}-p{pad_sentences}", "question": q, "hops": h, "pad": pad_sentences,
+                          "answer": f"{city_of[owner]}; {city_of[chain[-1]]}",
+                          "steps": [{"query": query, "docs": keys} for query, keys in steps]})
 
     if n_docs < len(facts):
         raise ValueError(f"n_docs={n_docs} is below the {len(facts)} fact documents needed")
     others = [p for p in people if p not in used_people]
+    mentions = dict.fromkeys(asked, 0)
+
+    def distractor_project():
+        # At most 2 filler mentions per asked project, so "project X" (the model's usual first query)
+        # still returns the owner/old-lead docs in its top 5.
+        proj = rng.choice(asked)
+        if mentions[proj] >= 2:
+            return rng.choice(decoys)
+        mentions[proj] += 1
+        return proj
+
     for i in range(n_docs - len(facts)):
         p, p2 = rng.sample(others[:60], 2)
         filler = rng.choice([
             f"Agreed that {p} will lead project {rng.choice(decoys)}.",  # decoy project lead
             f"{p} is based in the {city_of[p]} office.",
             f"{p} visited the {rng.choice(CITIES)} office for the quarterly review.",
-            f"Ticket OPS-{1000 + i}: {p} reported slow builds on project {rng.choice(asked)}.",
-            f"{p} and {p2} demoed project {rng.choice(asked)} to the leadership team.",
-            f"Reminder from {p}: expense reports for project {rng.choice(asked + decoys)} are due Friday.",
+            f"Ticket OPS-{1000 + i}: {p} reported slow builds on project {distractor_project()}.",
+            f"{p} and {p2} demoed project {distractor_project()} to the leadership team.",
+            f"Reminder from {p}: expense reports for project {distractor_project()} are due Friday.",
         ])
         facts.append((f"filler-{i}", day(), filler))
 
@@ -139,17 +158,19 @@ def generate(n_docs=80, n_questions=12, hops=(1, 2, 3, 4, 5, 6), seed=0, p_corre
         doc_id = f"doc-{n:04d}"
         key_to_id[key] = doc_id
         date = (datetime.date(2026, 1, 1) + datetime.timedelta(days=d)).isoformat()
-        pad = rng.sample(PADDING, pad_sentences)
+        pad = rng.choices(PADDING, k=pad_sentences)  # with replacement: levels exceed the pool size
         pad.insert(rng.randint(0, pad_sentences), text)
         docs.append({"id": doc_id, "kind": rng.choice(KINDS), "date": date, "text": " ".join(pad)})
     for q in questions:
-        q["support"] = [key_to_id[k] for k in q["support"]]
+        for step in q["steps"]:
+            step["docs"] = [key_to_id[k] for k in step["docs"]]
     _check_reachable(docs, questions)
     return {"docs": docs, "questions": questions}
 
 
 def _check_reachable(docs, questions):
-    """Rigor check: every planted answer appears in its supporting documents."""
-    by_id = {d["id"]: d for d in docs}
+    """Rigor check: both planted cities appear in the step documents."""
+    text = {d["id"]: d["text"] for d in docs}
     for q in questions:
-        assert any(q["answer"] in by_id[s]["text"] for s in q["support"]), q
+        support = " ".join(text[i] for step in q["steps"] for i in step["docs"])
+        assert all(f"based in the {c} office" in support for c in q["answer"].split("; ")), q

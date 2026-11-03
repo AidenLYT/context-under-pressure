@@ -10,7 +10,7 @@ SYSTEM_PROMPT = (
     "do not guess. Later documents can override earlier ones. Questions often need several searches: "
     "when a document gives you a person's name, search for that name to find the next fact, and do not "
     "answer 'Unknown' while there is a name you have not searched for. When you are done, end your reply "
-    "with a final line of the form 'ANSWER: <answer>', giving only the name or city."
+    "with a final line of the form 'ANSWER: <answer>', giving only the answer in the format the question asks for."
 )
 
 # Fixed settings, logged with every run (rigor checklist).
@@ -21,7 +21,7 @@ CONFIG = {
     "top_p": 0.8,
     "max_output_tokens": 1024,
     "enable_thinking": False,  # Qwen3 thinking off: GPU time is the binding constraint
-    "max_turns": 30,
+    "max_turns": 12,  # correct runs take 3-9 turns; beyond that S0 is looping on a lost context
     "system_prompt": SYSTEM_PROMPT,
 }
 

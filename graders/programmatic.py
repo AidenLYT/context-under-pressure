@@ -13,7 +13,7 @@ def extract_answer(text):
 
 def normalize(s):
     s = re.sub(r"[^a-z0-9 ]", " ", s.lower())
-    s = re.sub(r"\b(the|office)\b", " ", s)
+    s = re.sub(r"\b(the|office|and)\b", " ", s)  # "Lisbon and Osaka" == "Lisbon; Osaka"
     return " ".join(s.split())
 
 

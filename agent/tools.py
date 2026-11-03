@@ -19,13 +19,17 @@ def _terms(text):
 
 
 def search_docs(docs, query, k=5):
-    """Rank by summed IDF of matched query terms, so rare words (names, projects) beat common ones."""
+    """Rank by summed IDF of matched query terms, so rare words (names, projects) beat common ones.
+    Docs containing the exact query phrase rank first, so "Olga Mendes" beats "Olga Abara ... Ben Mendes"."""
     q = set(_terms(query))
+    phrase = " ".join(query.lower().split())
     doc_terms = [set(_terms(d["text"])) for d in docs]
     idf = {t: math.log(len(docs) / n) for t in q if (n := sum(t in dt for dt in doc_terms))}
     scored = []
     for d, dt in zip(docs, doc_terms):
         score = sum(idf.get(t, 0) for t in q & dt)
+        if score > 0 and phrase in d["text"].lower():
+            score += 1000
         if score > 0:
             scored.append((-score, d["id"], d))
     hits = [d for _, _, d in sorted(scored)[:k]]

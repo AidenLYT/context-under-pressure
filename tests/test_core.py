@@ -18,8 +18,8 @@ def estimate(messages):  # offline stand-in for the vLLM token counter
 class Generator(unittest.TestCase):
     def test_reachable_and_sized(self):
         for seed in range(20):
-            a = generate(n_docs=50, n_questions=10, seed=seed)  # asserts every answer is in its support docs
-            self.assertEqual(len(a["docs"]), 50)
+            a = generate(n_docs=150, n_questions=10, seed=seed)  # asserts every answer is in its support docs
+            self.assertEqual(len(a["docs"]), 150)
             self.assertEqual(len(a["questions"]), 10)
 
     def test_deterministic(self):
@@ -30,18 +30,26 @@ class Generator(unittest.TestCase):
             generate(n_docs=5, n_questions=10)
 
     def test_chain_walkable_by_search(self):
-        """Hop i's support doc is in the top 5 when searching hop i-1's answer: the dial is real."""
+        """Each step's docs are in the top 5 for that step's query, and the query is only learnable from
+        the previous step: hops = searches needed, so the dial is real."""
         for seed in range(10):
-            a = generate(seed=seed)
-            self.assertEqual({q["hops"] for q in a["questions"]}, {1, 2, 3, 4, 5, 6})
+            a = generate(seed=seed, hops=(3, 4, 5, 6, 7, 8))
+            self.assertEqual({q["hops"] for q in a["questions"]}, {3, 4, 5, 6, 7, 8})
             for q in a["questions"]:
-                self.assertEqual(len(q["support"]), q["hops"])
-                self.assertEqual(len(q["chain"]), q["hops"])
-                self.assertEqual(q["chain"][-1], q["answer"])
-                proj = q["question"].rstrip("?").split()[-1]
-                queries = [f"lead {proj}"] + q["chain"][:-1]
-                for query, doc in zip(queries, q["support"]):
-                    self.assertIn(doc, search_docs(a["docs"], query), (seed, q["id"], query))
+                self.assertEqual(len(q["steps"]), q["hops"])
+                for step in q["steps"]:
+                    found = search_docs(a["docs"], step["query"])
+                    for doc in step["docs"]:
+                        self.assertIn(doc, found, (seed, q["id"], step["query"]))
+
+    def test_answer_needs_the_early_fact(self):
+        """The first city comes from step 2 (the lead's search); the second from the last step."""
+        a = generate(seed=0)
+        by_id = {d["id"]: d["text"] for d in a["docs"]}
+        for q in a["questions"]:
+            first, second = q["answer"].split("; ")
+            self.assertTrue(any(f"based in the {first} office" in by_id[d] for d in q["steps"][1]["docs"]))
+            self.assertTrue(any(f"based in the {second} office" in by_id[d] for d in q["steps"][-1]["docs"]))
 
     def test_padding_is_generic(self):
         """Padding must not plant facts or steal search hits: no names, cities, projects or relation words."""
@@ -50,6 +58,19 @@ class Generator(unittest.TestCase):
         for sentence in archive_gen.PADDING:
             words = set(re.findall(r"[A-Za-z]+", sentence))
             self.assertFalse(words & banned, sentence)
+
+    def test_pad_level_changes_only_doc_length(self):
+        """The dial is doc length: same questions and answers at every level, longer docs."""
+        short, long = generate(seed=4, pad_sentences=10), generate(seed=4, pad_sentences=80)
+        strip = lambda qs: [(q["question"], q["answer"], q["steps"]) for q in qs]
+        self.assertEqual(strip(short["questions"]), strip(long["questions"]))
+        self.assertEqual({q["pad"] for q in long["questions"]}, {80})
+        self.assertGreater(min(len(d["text"]) for d in long["docs"]), 4 * max(len(d["text"]) for d in short["docs"]))
+        self.assertEqual({q["hops"] for q in long["questions"]}, {3})  # default: fixed short chain
+        for q in long["questions"]:
+            for step in q["steps"]:
+                for doc in step["docs"]:
+                    self.assertIn(doc, search_docs(long["docs"], step["query"]))
 
     def test_docs_are_long(self):
         a = generate(seed=0)
@@ -68,6 +89,12 @@ class Grader(unittest.TestCase):
         self.assertFalse(grade("Ava Abara", "Ava Abara"))  # no marker = not answered
         self.assertFalse(grade(None, "Ava Abara"))
         self.assertEqual(extract_answer("ANSWER:"), "")
+
+    def test_two_city_answers(self):
+        self.assertTrue(grade("ANSWER: Lisbon; Osaka", "Lisbon; Osaka"))
+        self.assertTrue(grade("ANSWER: the Lisbon office and the Osaka office", "Lisbon; Osaka"))
+        self.assertFalse(grade("ANSWER: Osaka; Lisbon", "Lisbon; Osaka"))  # order matters
+        self.assertFalse(grade("ANSWER: Lisbon", "Lisbon; Osaka"))
 
 
 class Tools(unittest.TestCase):
@@ -107,9 +134,9 @@ class Summary(unittest.TestCase):
         from analysis.summarize import summarize
 
         def run(correct, sent, hist):
-            return {"budget": 8192, "task": {"hops": 2}, "correct": correct, "max_prompt_tokens": 100,
+            return {"budget": 8192, "task": {"pad": 20}, "correct": correct, "max_prompt_tokens": 100,
                     "calls": [{"sent_messages": sent, "history_messages": hist}]}
-        cell = summarize([run(True, 3, 2), run(False, 2, 4)])[(8192, 2)]  # untrimmed pass, trimmed fail
+        cell = summarize([run(True, 3, 2), run(False, 2, 4)])[(8192, 20)]  # untrimmed pass, trimmed fail
         self.assertEqual((cell["n"], cell["correct"], cell["trimmed"], cell["trimmed_correct"]), (2, 1, 1, 0))
 
 
