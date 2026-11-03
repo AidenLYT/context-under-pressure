@@ -129,6 +129,43 @@ class NaiveStrategy(unittest.TestCase):
         self.assertEqual(s0_naive.prepare_context(h, 10_000), h)
 
 
+class ClearingStrategy(unittest.TestCase):
+    history = NaiveStrategy.history
+
+    def setUp(self):
+        from agent.strategies import s1_clearing
+        self.s1 = s1_clearing
+        for mod in (s0_naive, s1_clearing):
+            patcher = mock.patch.object(mod, "count_tokens", estimate)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_clears_old_results_before_dropping_turns(self):
+        h = self.history(10)
+        out = self.s1.prepare_context(h, 1300)  # too small for all results, big enough for all calls
+        self.assertLessEqual(estimate(out), 1300)
+        self.assertEqual(len(out), len(h))  # every turn kept, so the model still sees what it searched
+        self.assertEqual(out[1]["tool_calls"], h[1]["tool_calls"])
+        self.assertEqual(out[2]["content"], self.s1.STUB)  # oldest result cleared
+        self.assertEqual(out[-1], h[-1])  # newest result kept
+        self.assertEqual(h[2]["content"], "x" * 400)  # the real history is not edited
+
+    def test_no_change_when_it_fits(self):
+        h = self.history(2)
+        self.assertEqual(self.s1.prepare_context(h, 10_000), h)
+
+    def test_falls_back_to_dropping_turns(self):
+        h = self.history(40)
+        out = self.s1.prepare_context(h, 900)
+        self.assertLessEqual(estimate(out), 900)
+        self.assertEqual(out[0], h[0])
+        self.assertEqual(out[1]["role"], "assistant")
+        self.assertEqual(out[-1], h[-1])
+
+    def test_registered(self):
+        from agent import strategies
+        self.assertIs(strategies.get("s1"), self.s1.prepare_context)
+
 class Summary(unittest.TestCase):
     def test_cells_and_trim_detection(self):
         from analysis.summarize import summarize
@@ -138,6 +175,9 @@ class Summary(unittest.TestCase):
                     "calls": [{"sent_messages": sent, "history_messages": hist}]}
         cell = summarize([run(True, 3, 2), run(False, 2, 4)])[(8192, 20)]  # untrimmed pass, trimmed fail
         self.assertEqual((cell["n"], cell["correct"], cell["trimmed"], cell["trimmed_correct"]), (2, 1, 1, 0))
+        cleared = run(True, 3, 2)
+        cleared["calls"][0]["edited"] = True  # S1 clearing keeps the message count
+        self.assertEqual(summarize([cleared])[(8192, 20)]["trimmed"], 1)
 
 
 if __name__ == "__main__":

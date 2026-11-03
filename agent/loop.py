@@ -47,7 +47,7 @@ def run_task(llm, question, docs, prepare_context, budget, cfg=CONFIG):
         msg = resp.choices[0].message
         calls.append({"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens,
                       "counted_tokens": counted, "sent_messages": len(messages),
-                      "history_messages": len(history)})  # sent < history + 1 (system) means the strategy trimmed
+                      "history_messages": len(history), "edited": context != history})  # strategy trimmed or cleared
         turn = {"role": "assistant", "content": msg.content or ""}
         if msg.tool_calls:
             turn["tool_calls"] = [{"id": tc.id, "type": "function",

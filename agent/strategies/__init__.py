@@ -19,5 +19,5 @@ def count_tokens(messages, cfg=CONFIG):
 
 
 def get(name):
-    from agent.strategies import s0_naive
-    return {"s0": s0_naive.prepare_context}[name]
+    from agent.strategies import s0_naive, s1_clearing
+    return {"s0": s0_naive.prepare_context, "s1": s1_clearing.prepare_context}[name]

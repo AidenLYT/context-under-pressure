@@ -8,7 +8,8 @@ import sys
 
 
 def trimmed(run):
-    return any(c["sent_messages"] < c["history_messages"] + 1 for c in run["calls"])  # +1 = system prompt
+    # "edited" catches S1 clearing (same message count); older logs only have the counts (+1 = system prompt)
+    return any(c.get("edited", c["sent_messages"] < c["history_messages"] + 1) for c in run["calls"])
 
 
 def summarize(runs):
